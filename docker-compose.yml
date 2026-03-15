@@ -35,7 +35,7 @@ services:
       - ZEROCLAW_GATEWAY_PORT=${ZEROCLAW_GATEWAY_PORT:-42617}
       
       # Optional: Model override
-      # - ZEROCLAW_MODEL=anthropic/claude-sonnet-4-20250514
+      - ZEROCLAW_MODEL=${ZEROCLAW_MODEL:-anthropic/claude-haiku-4.5}
       
     volumes:
       # Persist workspace and config (must match WORKDIR/HOME in Dockerfile)
