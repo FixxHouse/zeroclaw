@@ -2,7 +2,7 @@ name: Release Beta
 
 on:
   push:
-    branches: [master]
+    branches: [dev_http_api]
 
 concurrency:
   group: release
@@ -273,21 +273,6 @@ jobs:
             --notes-file release-notes.md \
             --prerelease
 
-  redeploy-website:
-    name: Trigger Website Redeploy
-    needs: [publish]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger website redeploy
-        env:
-          PAT: ${{ secrets.WEBSITE_REPO_PAT }}
-        run: |
-          curl -fsSL -X POST \
-            -H "Authorization: token $PAT" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/zeroclaw-labs/zeroclaw-website/dispatches \
-            -d '{"event_type":"new-release","client_payload":{"install_script_url":"https://raw.githubusercontent.com/zeroclaw-labs/zeroclaw/master/install.sh"}}'
-
   docker:
     name: Push Docker Image
     needs: [version, build]
@@ -315,13 +300,3 @@ jobs:
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  # ── Post-publish: only run after ALL artifacts are live ──────────────
-  tweet:
-    name: Tweet Release
-    needs: [version, publish, docker, redeploy-website]
-    uses: ./.github/workflows/tweet-release.yml
-    with:
-      release_tag: ${{ needs.version.outputs.tag }}
-      release_url: https://github.com/zeroclaw-labs/zeroclaw/releases/tag/${{ needs.version.outputs.tag }}
-    secrets: inherit
