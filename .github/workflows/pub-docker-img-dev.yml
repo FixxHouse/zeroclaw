@@ -1,0 +1,85 @@
+name: Pub Docker Img (Dev)
+
+on:
+    push:
+        branches: ["**"]
+    workflow_dispatch:
+
+concurrency:
+    group: docker-dev-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    REGISTRY: ghcr.io
+    IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+    publish:
+        name: Build and Push Docker Image
+        runs-on: blacksmith-2vcpu-ubuntu-2404
+        timeout-minutes: 45
+        permissions:
+            contents: read
+            packages: write
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+            - name: Setup Blacksmith Builder
+              uses: useblacksmith/setup-docker-builder@ef12d5b165b596e3aa44ea8198d8fde563eab402 # v1
+
+            - name: Log in to Container Registry
+              uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Compute tags
+              id: meta
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+                  SHA_TAG="${IMAGE}:sha-${GITHUB_SHA::12}"
+                  BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+                  # Sanitize branch name for Docker tag (replace / with -)
+                  BRANCH_TAG="${IMAGE}:${BRANCH_NAME//\//-}"
+                  TAGS="${BRANCH_TAG},${SHA_TAG}"
+
+                  echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+                  echo "branch_tag=${BRANCH_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+            - name: Build and push Docker image
+              uses: useblacksmith/build-push-action@30c71162f16ea2c27c3e21523255d209b8b538c1 # v2
+              with:
+                  context: .
+                  push: true
+                  tags: ${{ steps.meta.outputs.tags }}
+                  platforms: linux/amd64,linux/arm64
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: Verify GHCR pull access
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  BRANCH_TAG="${{ steps.meta.outputs.branch_tag }}"
+                  token_resp="$(curl -sS "https://ghcr.io/token?scope=repository:${GITHUB_REPOSITORY}:pull")"
+                  token="$(echo "$token_resp" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+
+                  if [ -z "$token" ]; then
+                    echo "::warning::Anonymous GHCR token request failed — skipping pull verification."
+                    exit 0
+                  fi
+
+                  code="$(curl -sS -o /tmp/ghcr-manifest.json -w "%{http_code}" \
+                    -H "Authorization: Bearer ${token}" \
+                    -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+                    "https://ghcr.io/v2/${GITHUB_REPOSITORY}/manifests/${BRANCH_TAG}")"
+
+                  if [ "$code" != "200" ]; then
+                    echo "::warning::Anonymous manifest pull returned HTTP ${code} — image may not be public yet."
+                  else
+                    echo "GHCR pull access verified for tag: ${BRANCH_TAG}"
+                  fi
